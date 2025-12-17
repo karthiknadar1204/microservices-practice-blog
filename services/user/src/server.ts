@@ -39,7 +39,7 @@ app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
 });
 
-const port = process.env.PORT || 5000;
+const port = process.env.PORT || 5004;
 
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
