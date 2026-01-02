@@ -1,0 +1,84 @@
+## **Simple Explanation: How RabbitMQ Works Here**
+
+RabbitMQ is a message broker that lets services communicate asynchronously.
+
+### **The Problem:**
+- **Author Service**: Creates, updates, or deletes blogs
+- **Blog Service**: Serves blogs and caches them in Redis
+
+When the Author Service changes a blog, the Blog Service’s cache can become stale.
+
+### **The Solution with RabbitMQ:**
+
+1. **Author Service (Producer/Sender)**:
+   - When a blog is created, updated, or deleted, it sends a message to RabbitMQ: "Hey, invalidate cache for blogs!"
+   - Uses the `invalidateChacheJob()` function which publishes to a queue called `"cache-invalidation"`
+
+2. **RabbitMQ (Message Queue)**:
+   - Acts as a mailbox that holds the message until the Blog Service is ready to process it
+
+3. **Blog Service (Consumer/Receiver)**:
+   - Listens to the `"cache-invalidation"` queue
+   - When it receives a message, it:
+     - Deletes the old cached data from Redis
+     - Fetches fresh data from the database
+     - Rebuilds the cache with the new data
+
+### **Why This Matters:**
+- Services don’t need to know about each other directly
+- If the Blog Service is busy, messages wait in the queue
+- Cache stays in sync across services
+- Services can scale independently
+
+**In one sentence:** RabbitMQ lets the Author Service notify the Blog Service to refresh its cache when blogs change, without the services talking directly to each other.
+
+ohk so the cachekey name is blogs*,now when the author publishes a blog,we need to invalidate the cache so first in the services/author/utils/rabbitmq,in the invaldatecachejob,the message consist of the action i.e invalidateCache and keys:cachekeys which here is blog* i suppose, in the publishtoqueue function,receives the queue name i.e cache-invalidation and the message.
+
+then rabbitmq sends the details to the queue cache-invalidation which is a consumer in the services/blog/src/utils/consumer.ts which has its own configuration for rabbitmq written,here the queue name is cache-invalidation.
+
+
+### Flow breakdown
+
+1. Author Service publishes a blog → calls `invalidateChacheJob(["blogs:*"])`
+2. Message structure:
+   ```javascript
+   {
+     action: "invalidateCache",
+     keys: ["blogs:*"]  // array of cache key patterns
+   }
+   ```
+3. `publishToQueue("cache-invalidation", message)` sends it to RabbitMQ
+4. Blog Service consumer listens to `"cache-invalidation"` queue
+5. Checks `content.action === "invalidateCache"` and processes it
+
+### What `assertQueue` means
+
+`assertQueue` ensures the queue exists. If it doesn't, RabbitMQ creates it; if it does, it verifies it matches the options.
+
+- `{ durable: true }` means the queue survives RabbitMQ restarts (messages are still lost unless marked persistent, which you're doing with `persistent: true`)
+
+Both the producer (author service) and consumer (blog service) call `assertQueue` with the same name and options so they're using the same queue.
+
+### Visual flow
+
+```
+Author Service                    RabbitMQ                    Blog Service
+     │                               │                            │
+     │ 1. createBlog()               │                            │
+     │    ↓                           │                            │
+     │ 2. invalidateChacheJob()      │                            │
+     │    ↓                           │                            │
+     │ 3. publishToQueue()           │                            │
+     │    ──────────────────────────>│                            │
+     │    assertQueue("cache-        │                            │
+     │              invalidation")    │                            │
+     │                               │ 4. Queue stores message    │
+     │                               │    ───────────────────────>│
+     │                               │                            │ 5. consume()
+     │                               │                            │    ↓
+     │                               │                            │ 6. Check action
+     │                               │                            │    ↓
+     │                               │                            │ 7. Invalidate cache
+     │                               │                            │    Rebuild cache
+```
+
