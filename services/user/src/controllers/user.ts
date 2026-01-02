@@ -1,74 +1,40 @@
 import User from "../model/User.js";
 import jwt from "jsonwebtoken";
-import bcrypt from "bcrypt";
 import TryCatch from "../utils/TryCatch.js";
-import { type AuthenticatedRequest } from "../middleware/isAuth.js";
-
-export const registerUser = TryCatch(async (req, res) => {
-  const { name, email, password, image } = req.body;
-
-  if (!name || !email || !password) {
-    res.status(400).json({
-      message: "Name, email, and password are required",
-    });
-    return;
-  }
-
-  const existingUser = await User.findOne({ email });
-
-  if (existingUser) {
-    res.status(400).json({
-      message: "User with this email already exists",
-    });
-    return;
-  }
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  const user = await User.create({
-    name,
-    email,
-    password: hashedPassword,
-    image: image || "https://via.placeholder.com/150",
-  });
-
-  const token = jwt.sign({ user }, process.env.JWT_SEC as string, {
-    expiresIn: "5d",
-  });
-
-  res.status(201).json({
-    message: "User registered successfully",
-    token,
-    user,
-  });
-});
+import { AuthenticatedRequest } from "../middleware/isAuth.js";
+import getBuffer from "../utils/dataUri.js";
+import { v2 as cloudinary } from "cloudinary";
+import { oauth2client } from "../utils/GoogleConfig.js";
+import axios from "axios";
 
 export const loginUser = TryCatch(async (req, res) => {
-  const { email, password } = req.body;
+  const { code } = req.body;
 
-  if (!email || !password) {
+  if (!code) {
     res.status(400).json({
-      message: "Email and password are required",
+      message: "Authorization code is required",
     });
     return;
   }
 
-  const user = await User.findOne({ email });
+  const googleRes = await oauth2client.getToken(code);
+
+  oauth2client.setCredentials(googleRes.tokens);
+
+  const userRes = await axios.get(
+    `https://www.googleapis.com/oauth2/v1/userinfo?alt=json&access_token=${googleRes.tokens.access_token}`
+  );
+
+  const { email, name, picture } = userRes.data;
+
+  let user = await User.findOne({ email });
 
   if (!user) {
-    res.status(401).json({
-      message: "Invalid email or password",
+    user = await User.create({
+      name,
+      email,
+      image: picture,
     });
-    return;
-  }
-
-  const isPasswordValid = await bcrypt.compare(password, user.password);
-
-  if (!isPasswordValid) {
-    res.status(401).json({
-      message: "Invalid email or password",
-    });
-    return;
   }
 
   const token = jwt.sign({ user }, process.env.JWT_SEC as string, {
@@ -126,3 +92,46 @@ export const updateUser = TryCatch(async (req: AuthenticatedRequest, res) => {
     user,
   });
 });
+
+export const updateProfilePic = TryCatch(
+  async (req: AuthenticatedRequest, res) => {
+    const file = req.file;
+
+    if (!file) {
+      res.status(400).json({
+        message: "No file to upload",
+      });
+      return;
+    }
+
+    const fileBuffer = getBuffer(file);
+
+    if (!fileBuffer || !fileBuffer.content) {
+      res.status(400).json({
+        message: "Failed to generate buffer",
+      });
+      return;
+    }
+    const cloud = await cloudinary.uploader.upload(fileBuffer.content, {
+      folder: "blogs",
+    });
+
+    const user = await User.findByIdAndUpdate(
+      req.user?._id,
+      {
+        image: cloud.secure_url,
+      },
+      { new: true }
+    );
+
+    const token = jwt.sign({ user }, process.env.JWT_SEC as string, {
+      expiresIn: "5d",
+    });
+
+    res.json({
+      message: "User Profile pic updated",
+      token,
+      user,
+    });
+  }
+);

@@ -1,6 +1,6 @@
-import { type NextFunction, type Request, type Response } from "express";
-import jwt, { type JwtPayload } from "jsonwebtoken";
-import { type IUser } from "../model/User.js";
+import { NextFunction, Request, Response } from "express";
+import jwt, { JwtPayload } from "jsonwebtoken";
+import { IUser } from "../model/User.js";
 
 export interface AuthenticatedRequest extends Request {
   user?: IUser | null;
@@ -24,7 +24,7 @@ export const isAuth = async (
     const token = authHeader.split(" ")[1];
 
     const decodeValue = jwt.verify(
-      token as string,
+      token,
       process.env.JWT_SEC as string
     ) as JwtPayload;
 

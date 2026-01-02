@@ -1,4 +1,4 @@
-import { type NextFunction, type Request, type RequestHandler, type Response } from "express";
+import { NextFunction, Request, RequestHandler, Response } from "express";
 
 const TryCatch = (handler: RequestHandler): RequestHandler => {
   return async (req: Request, res: Response, next: NextFunction) => {
